@@ -1,0 +1,123 @@
+# Collective LexisNexis - Docker Compose Stack
+# Version: 1.0.0
+# Usage: docker-compose up -d
+
+version: '3.8'
+
+services:
+  # --- Knowledge Engine ---
+  knowledge-engine:
+    build: ./services/knowledge-engine
+    container_name: lexis-knowledge
+    ports:
+      - "${KNOWLEDGE_PORT:-8001}:8000"
+    volumes:
+      - ./data/knowledge-base:/app/data
+      - knowledge-index:/app/index
+    environment:
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    depends_on:
+      - ollama
+    restart: unless-stopped
+
+  # --- Compliance Checker (AML/KYC) ---
+  compliance-checker:
+    build: ./services/compliance-checker
+    container_name: lexis-compliance
+    ports:
+      - "${COMPLIANCE_PORT:-8002}:8000"
+    volumes:
+      - ./data/compliance-rules:/app/rules
+    environment:
+      - KNOWLEDGE_API=http://knowledge-engine:8000
+      - STRICT_MODE=${COMPLIANCE_STRICT:-true}
+    depends_on:
+      - knowledge-engine
+    restart: unless-stopped
+
+  # --- Legal Analyzer ---
+  legal-analyzer:
+    build: ./services/legal-analyzer
+    container_name: lexis-legal
+    ports:
+      - "${LEGAL_PORT:-8003}:8000"
+    volumes:
+      - ./data/legal-templates:/app/templates
+    environment:
+      - KNOWLEDGE_API=http://knowledge-engine:8000
+      - JURISDICTIONS=${JURISDICTIONS:-FR,IL,RU}
+    depends_on:
+      - knowledge-engine
+    restart: unless-stopped
+
+  # --- MiroFish Predictor ---
+  mirofish-predictor:
+    build: ./services/mirofish-predictor
+    container_name: lexis-mirofish
+    ports:
+      - "${MIROFISH_PORT:-8004}:8000"
+    volumes:
+      - ./data/knowledge-base:/app/data:ro
+      - mirofish-models:/app/models
+    environment:
+      - KNOWLEDGE_API=http://knowledge-engine:8000
+    depends_on:
+      - knowledge-engine
+    restart: unless-stopped
+
+  # --- Agent Orchestrator (MetaClaw) ---
+  orchestrator:
+    build: ./services/orchestrator
+    container_name: lexis-orchestrator
+    ports:
+      - "${ORCHESTRATOR_PORT:-8000}:8000"
+    environment:
+      - KNOWLEDGE_API=http://knowledge-engine:8000
+      - COMPLIANCE_API=http://compliance-checker:8000
+      - LEGAL_API=http://legal-analyzer:8000
+      - MIROFISH_API=http://mirofish-predictor:8000
+      - AI_PROVIDER=${AI_PROVIDER:-ollama}
+      - OLLAMA_HOST=${OLLAMA_HOST:-http://ollama:11434}
+    depends_on:
+      - knowledge-engine
+      - compliance-checker
+      - legal-analyzer
+      - mirofish-predictor
+    restart: unless-stopped
+
+  # --- Web UI ---
+  web-ui:
+    build: ./services/web-ui
+    container_name: lexis-ui
+    ports:
+      - "${UI_PORT:-3000}:3000"
+    environment:
+      - API_URL=http://orchestrator:8000
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+  # --- Ollama (local AI) ---
+  ollama:
+    image: ollama/ollama:latest
+    container_name: lexis-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  knowledge-index:
+  mirofish-models:
+  ollama-models:
